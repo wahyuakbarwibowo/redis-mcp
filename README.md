@@ -1,142 +1,87 @@
 # redis-mcp
 
-A safe, connection-efficient Redis [MCP](https://modelcontextprotocol.io) server.
+Safe, connection-efficient [Model Context Protocol](https://modelcontextprotocol.io) server for Redis.
 
-## Design goals
+It exposes common Redis inspection and write operations while requiring explicit confirmation for destructive actions.
 
-- **No accidental data loss.** Destructive tools (`redis_delete`, `redis_expire`, `redis_flushdb`) refuse to run unless called with `confirm=true` — the tool description instructs the AI to ask the user first. `redis_flushdb` additionally requires the literal phrase `confirm_phrase="FLUSH ALL DATA"`. `redis_set` refuses to overwrite an existing key unless `overwrite=true`.
-- **Gentle on the Redis server.**
-  - One lazy, reused connection per MCP process (`lazyConnect`) — no connection churn, no pool needed since stdio MCP calls are sequential.
-  - `SCAN` with cursor + result limits instead of `KEYS` (never blocks the server).
-  - `UNLINK` instead of `DEL` and `FLUSHDB ASYNC` — deletes happen in a background thread on the Redis side.
-  - Collection reads are truncated to 200 elements.
+## Features
+
+- Reuses one lazy Redis connection per MCP process.
+- Uses cursor-based `SCAN` instead of blocking `KEYS`.
+- Uses `UNLINK` and `FLUSHDB ASYNC` for non-blocking deletion.
+- Limits collection reads to 200 elements.
+- Prevents accidental overwrites unless `overwrite=true` is set.
+- Gates destructive tools behind explicit confirmation.
 
 ## Tools
 
-| Tool | Description | Destructive? |
-|---|---|---|
-| `redis_get` | Get a string key | no |
-| `redis_scan` | List keys by pattern (SCAN, limited) | no |
-| `redis_inspect` | Type + TTL + value for any key type | no |
-| `redis_info` | Server INFO (memory, stats, keyspace, …) | no |
-| `redis_set` | Set a string key (won't overwrite without `overwrite=true`) | no |
-| `redis_delete` | Delete keys via UNLINK | **requires `confirm=true`** |
-| `redis_expire` | Set a key's TTL | **requires `confirm=true`** |
-| `redis_flushdb` | Wipe the current DB | **requires `confirm=true` + phrase** |
+| Tool | Purpose | Confirmation |
+| --- | --- | --- |
+| `redis_get` | Read a string value | — |
+| `redis_scan` | Find keys by pattern | — |
+| `redis_inspect` | Read type, TTL, and value | — |
+| `redis_info` | Read Redis server info | — |
+| `redis_set` | Set a string value, optionally with TTL | `overwrite=true` to replace an existing key |
+| `redis_delete` | Delete keys with `UNLINK` | `confirm=true` |
+| `redis_expire` | Set a key TTL | `confirm=true` |
+| `redis_flushdb` | Delete every key in the current database | `confirm=true` and `confirm_phrase="FLUSH ALL DATA"` |
 
 ## Requirements
 
-- Node.js ≥ 18
+- Node.js 18 or newer
 - A reachable Redis server
 
 ## Install
 
 ```bash
-git clone <this-repo> redis-mcp
+git clone https://github.com/wahyuakbarwibowo/redis-mcp.git
 cd redis-mcp
 npm install
 ```
 
-Configuration is a single env var:
+Set `REDIS_URL` to configure Redis. It defaults to `redis://127.0.0.1:6379`.
 
-- `REDIS_URL` — default `redis://127.0.0.1:6379`. Examples: `redis://user:pass@host:6379/2`, `rediss://host:6380` (TLS).
+```bash
+REDIS_URL=redis://127.0.0.1:6379 node src/index.js
+```
 
-Run manually to verify: `REDIS_URL=redis://127.0.0.1:6379 node src/index.js` (it prints `[redis-mcp] ready` on stderr).
+The server communicates over stdio. It logs readiness to stderr.
 
-In all snippets below, replace `/absolute/path/to/redis-mcp` with where you cloned it.
+## MCP configuration
+
+Replace `/absolute/path/to/redis-mcp` with the path where you cloned the repository.
 
 ### Claude Code
 
 ```bash
-claude mcp add redis --env REDIS_URL=redis://127.0.0.1:6379 -- node /absolute/path/to/redis-mcp/src/index.js
+claude mcp add redis \
+  --env REDIS_URL=redis://127.0.0.1:6379 \
+  -- node /absolute/path/to/redis-mcp/src/index.js
 ```
 
-Or add to `.mcp.json` in your project (or `~/.claude.json` for global):
+### Claude Desktop, Codex CLI, OpenCode, Kilo Code, and Antigravity
+
+Use this server command in the client’s MCP configuration:
 
 ```json
 {
-  "mcpServers": {
-    "redis": {
-      "command": "node",
-      "args": ["/absolute/path/to/redis-mcp/src/index.js"],
-      "env": { "REDIS_URL": "redis://127.0.0.1:6379" }
-    }
-  }
+  "command": "node",
+  "args": ["/absolute/path/to/redis-mcp/src/index.js"],
+  "env": { "REDIS_URL": "redis://127.0.0.1:6379" }
 }
 ```
 
-### Claude Desktop
-
-Add the same `mcpServers` block to `claude_desktop_config.json`
-(macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`).
-
-### Codex (OpenAI Codex CLI)
-
-Add to `~/.codex/config.toml`:
-
-```toml
-[mcp_servers.redis]
-command = "node"
-args = ["/absolute/path/to/redis-mcp/src/index.js"]
-env = { REDIS_URL = "redis://127.0.0.1:6379" }
-```
-
-### OpenCode
-
-Add to `opencode.json` (project) or `~/.config/opencode/opencode.json` (global):
-
-```json
-{
-  "mcp": {
-    "redis": {
-      "type": "local",
-      "command": ["node", "/absolute/path/to/redis-mcp/src/index.js"],
-      "environment": { "REDIS_URL": "redis://127.0.0.1:6379" },
-      "enabled": true
-    }
-  }
-}
-```
-
-### Kilo Code
-
-Settings → MCP Servers → Edit MCP Settings (`mcp_settings.json`), or `.kilocode/mcp.json` in your project:
-
-```json
-{
-  "mcpServers": {
-    "redis": {
-      "command": "node",
-      "args": ["/absolute/path/to/redis-mcp/src/index.js"],
-      "env": { "REDIS_URL": "redis://127.0.0.1:6379" }
-    }
-  }
-}
-```
-
-### Antigravity (Google)
-
-Agent panel → MCP servers (⚙) → Manage MCP Servers → View raw config (`mcp_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "redis": {
-      "command": "node",
-      "args": ["/absolute/path/to/redis-mcp/src/index.js"],
-      "env": { "REDIS_URL": "redis://127.0.0.1:6379" }
-    }
-  }
-}
-```
+Each client uses a different wrapper key around this command. See its MCP configuration documentation for the expected format.
 
 ## Safety model
 
-1. The AI calls a destructive tool without `confirm` → the server **refuses** and returns a message telling the AI to ask the user first, listing exactly what would be deleted.
-2. The user explicitly approves.
-3. The AI retries with `confirm=true` (and the confirm phrase for flush).
+Destructive tools follow this sequence:
 
-The gate lives in the server, so it holds even if the client/AI forgets to ask.
+1. The first call without confirmation is refused and describes the intended action.
+2. The user explicitly approves that exact action.
+3. The client retries with the required confirmation fields.
+
+The checks run inside the server, so they remain effective even if an MCP client or AI agent forgets to ask first.
 
 ## License
 

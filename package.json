@@ -1,7 +1,7 @@
 {
   "name": "redis-mcp",
   "version": "1.0.0",
-  "description": "Safe, connection-efficient Redis MCP server. Destructive ops require explicit confirmation.",
+  "description": "Safe, connection-efficient Redis MCP server with confirmation-gated destructive operations.",
   "type": "module",
   "bin": { "redis-mcp": "src/index.js" },
   "main": "src/index.js",
